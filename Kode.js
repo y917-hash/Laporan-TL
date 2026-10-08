@@ -1259,15 +1259,16 @@ function prosesPerintahOperModalTelegram_(teks, namaMember, userId, timestamp) {
 }
 
 function kirimPesanTelegram_(chatId, message) {
-  try {
-    const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage';
-    const payload = { chat_id: String(chatId), text: String(message || ''), parse_mode: 'Markdown' };
-    const response = UrlFetchApp.fetch(url, { method: 'post', payload: payload, muteHttpExceptions: true });
-    return response.getContentText();
-  } catch (err) {
-    Logger.log('Gagal kirim pesan Telegram: ' + err.toString());
-    return '';
+  var r = panggilTelegram_('sendMessage', {
+    chat_id: String(chatId),
+    text: String(message || ''),
+    parse_mode: 'Markdown'
+  });
+  if (!r.ok) {
+    Logger.log('Gagal kirim pesan Telegram: ' + r.error);
+    catatLogTelegram_(new Date(), 'REKAP_GAGAL', String(chatId) + ' | ' + r.error);
   }
+  return r.response || '';
 }
 
 function jsonResponseTelegram_(data) {
@@ -1275,8 +1276,21 @@ function jsonResponseTelegram_(data) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+// Memecah ID bergaya "-100123_25" menjadi chat_id + message_thread_id (grup forum/topik)
+function pecahChatId_(raw) {
+  var s = String(raw || '').trim();
+  var m = s.match(/^(-?\d+)[_:](\d+)$/);
+  return m ? { chat_id: m[1], message_thread_id: Number(m[2]) } : { chat_id: s };
+}
+
 function panggilTelegram_(method, payload) {
   if (!BOT_TOKEN) return { ok: false, error: 'BOT_TOKEN belum diatur di Script Properties.' };
+
+  var tujuan = pecahChatId_(payload.chat_id);
+  payload.chat_id = tujuan.chat_id;
+  if (tujuan.message_thread_id && !payload.message_thread_id) {
+    payload.message_thread_id = tujuan.message_thread_id;
+  }
 
   try {
     const response = UrlFetchApp.fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/' + method, {
@@ -2042,5 +2056,32 @@ function tesSimpanData() {
 
 function cetakScriptProperties() {
   var props = PropertiesService.getScriptProperties().getProperties();
+  Object.keys(props).forEach(function(k) {
+    if (/TOKEN|SECRET|KEY|PASSWORD/i.test(k)) props[k] = '***disembunyikan***';
+  });
   Logger.log(JSON.stringify(props, null, 2));
+}
+
+/**
+ * CEK SEMUA GRUP: menguji setiap Script Property yang isinya berupa ID chat Telegram.
+ * Jalankan dari editor, lihat hasil di Execution log. Tiap grup menerima 1 pesan tes.
+ */
+function cekSemuaGrupDiProperties() {
+  var props = PropertiesService.getScriptProperties().getProperties();
+  Object.keys(props).forEach(function(nama) {
+    if (nama === 'BOT_TOKEN') return;
+    var nilai = props[nama];
+    if (!/^\s*-?\d+([_:]\d+)?\s*$/.test(nilai)) {
+      Logger.log(nama + ' | dilewati (bukan format ID chat): "' + nilai + '"');
+      return;
+    }
+    var t = pecahChatId_(nilai);
+    var payload = { chat_id: t.chat_id, text: '✅ Tes koneksi bot: ' + nama };
+    if (t.message_thread_id) payload.message_thread_id = t.message_thread_id;
+    var info = panggilTelegram_('getChat', { chat_id: t.chat_id });
+    var tes = panggilTelegram_('sendMessage', payload);
+    Logger.log(nama + ' | "' + nilai + '" | getChat: ' +
+      (info.ok ? 'OK (' + info.result.title + ')' : 'GAGAL: ' + info.error) +
+      ' | kirim: ' + (tes.ok ? 'OK' : 'GAGAL: ' + tes.error));
+  });
 }
