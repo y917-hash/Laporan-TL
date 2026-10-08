@@ -1453,8 +1453,34 @@ function cekHakPutusTT_(chatId, userId) {
   return s === 'creator' || (!TT_HANYA_OWNER && s === 'administrator');
 }
 
-// Cabang ditentukan dari grup tempat perintah diketik (tabel telegram_groups, sama seperti form)
+// Kunci pencocokan nama cabang: abaikan huruf besar/kecil, spasi, dan simbol.
+// "MP 1" = "MP1" = "mp1"  |  "PASAR 6" = "PSR 6" = "P 6" = "P6"
+function kunciCabangTT_(s) {
+  return String(s == null ? '' : s).toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .replace(/^(PASAR|PSR)(?=\d)/, 'P');
+}
+
+// Ubah nama dari grup menjadi nama resmi di tabel cabang (supaya cocok dengan form)
+function samakanNamaCabangTT_(nama) {
+  nama = String(nama || '').trim();
+  if (!nama) return '';
+  var r = supabaseReq_('GET', 'cabang?select=nama_cabang&aktif=eq.true');
+  if (r.ok && Array.isArray(r.data)) {
+    var k = kunciCabangTT_(nama);
+    for (var i = 0; i < r.data.length; i++) {
+      if (kunciCabangTT_(r.data[i].nama_cabang) === k) return String(r.data[i].nama_cabang).trim();
+    }
+  }
+  return nama;
+}
+
 function cariCabangGrupTT_(msg) {
+  return samakanNamaCabangTT_(cariCabangGrupMentahTT_(msg));
+}
+
+// Cabang ditentukan dari grup tempat perintah diketik (tabel telegram_groups, sama seperti form)
+function cariCabangGrupMentahTT_(msg) {
   var chatId = String(msg.chat && msg.chat.id != null ? msg.chat.id : '');
   var thread = msg.message_thread_id != null ? Number(msg.message_thread_id) : null;
 
@@ -1492,14 +1518,14 @@ function kirimBalasanTT_(msg, text) {
 
 function prosesPerintahTT_(msg, namaMember, timestamp) {
   var teks = String(msg.text || '').trim();
-  var m = teks.match(/^\/tt(pagi|malam)(?:@[A-Za-z0-9_]+)?\s+([\d.,]+)\s*$/i);
+  var m = teks.match(/^\/t([pm])(?:@[A-Za-z0-9_]+)?\s+([\d.,]+)\s*$/i);
 
   if (!m) {
-    kirimBalasanTT_(msg, '❌ Format salah.\n\nGunakan:\n/ttpagi 500  → untuk shift Pagi\n/ttmalam 500 → untuk shift Malam');
+    kirimBalasanTT_(msg, '❌ Format salah.\n\nGunakan:\n/tp 500 → untuk shift Pagi\n/tm 500 → untuk shift Malam');
     return { ok: false, log: 'Format TT salah: ' + teks };
   }
 
-  var shift = m[1].toLowerCase() === 'pagi' ? 'Pagi' : 'Malam';
+  var shift = m[1].toLowerCase() === 'p' ? 'Pagi' : 'Malam';
   var nominal = angka_(m[2]) * TT_KALI;
   if (nominal <= 0) {
     kirimBalasanTT_(msg, '❌ Nominal TT harus lebih dari 0.');
@@ -1671,8 +1697,8 @@ function doPost(e) {
 
     var teksPesan = msg.text ? msg.text.trim() : '';
 
-    // PERINTAH /ttpagi & /ttmalam
-    if (/^\/tt(?:pagi|malam)?(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(teksPesan)) {
+    // PERINTAH /tp (Pagi) & /tm (Malam)
+    if (/^\/t[pm](?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(teksPesan)) {
       var cacheTT = CacheService.getScriptCache();
       var kunciTT = 'tt_' + (msg.chat ? msg.chat.id : '') + '_' + msg.message_id;
       if (!contents.edited_message && !cacheTT.get(kunciTT) && msg.chat && msg.chat.id != null) {
